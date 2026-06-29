@@ -21,7 +21,7 @@ export function GroupPicker({ groups, value, onChange }: GroupPickerProps) {
   if (groups.length === 0) {
     return (
       <TextField
-        placeholder="Tạo nhóm mới (không bắt buộc)"
+        placeholder="Create new group (optional)"
         value={value}
         onChange={(e) => onChange(e.target.value)}
       />
@@ -38,7 +38,7 @@ export function GroupPicker({ groups, value, onChange }: GroupPickerProps) {
             onChange("");
           }}
         >
-          Không nhóm
+          No group
         </Chip>
         {groups.map((g) => (
           <Chip
@@ -60,13 +60,13 @@ export function GroupPicker({ groups, value, onChange }: GroupPickerProps) {
           }}
         >
           <Plus size={13} />
-          Nhóm mới
+          New group
         </Chip>
       </div>
       {creating ? (
         <TextField
           autoFocus
-          placeholder="Tên nhóm mới"
+          placeholder="New group name"
           value={isNew ? value : ""}
           onChange={(e) => onChange(e.target.value)}
         />
