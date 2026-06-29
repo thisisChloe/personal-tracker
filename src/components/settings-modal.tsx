@@ -43,7 +43,7 @@ export function SettingsModal({
   const [purgeDays, setPurgeDays] = useState(30);
 
   async function handlePurge() {
-    const n = countDoneOlderThan(purgeDays);
+    const n = await countDoneOlderThan(purgeDays);
     const ok = await confirm(
       n === 0
         ? {
@@ -59,7 +59,7 @@ export function SettingsModal({
             danger: true,
           },
     );
-    if (ok && n > 0) purgeDoneOlderThan(purgeDays);
+    if (ok && n > 0) await purgeDoneOlderThan(purgeDays);
   }
 
   async function handleClear() {
@@ -72,7 +72,7 @@ export function SettingsModal({
         danger: true,
       })
     ) {
-      clearData();
+      await clearData();
     }
   }
 
@@ -85,7 +85,7 @@ export function SettingsModal({
         confirmLabel: "Create sample data",
       })
     ) {
-      createSampleData();
+      await createSampleData();
     }
   }
 

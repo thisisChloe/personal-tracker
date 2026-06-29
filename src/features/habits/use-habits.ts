@@ -1,6 +1,7 @@
+import { useEffect, useState } from "react";
+import { supabase } from "../../lib/supabase";
 import { createId } from "../../lib/id";
 import { toIsoDate, todayIso } from "../../lib/date";
-import { useLocalStorage } from "../../lib/use-local-storage";
 
 export type Habit = {
   id: string;
@@ -9,33 +10,45 @@ export type Habit = {
   done: string[];
 };
 
-/** Habit store: add / remove / toggle today's completion. */
 export function useHabits() {
-  const [habits, setHabits] = useLocalStorage<Habit[]>("pt.habits", []);
+  const [habits, setHabits] = useState<Habit[]>([]);
+
+  useEffect(() => {
+    supabase
+      .from("habits")
+      .select("*")
+      .then(({ data }) => {
+        if (data)
+          setHabits(
+            data.map((row) => ({ id: row.id, name: row.name, done: row.done ?? [] })),
+          );
+      });
+  }, []);
 
   function addHabit(name: string) {
     const clean = name.trim();
     if (!clean) return;
-    setHabits((prev) => [...prev, { id: createId(), name: clean, done: [] }]);
+    const habit: Habit = { id: createId(), name: clean, done: [] };
+    setHabits((prev) => [...prev, habit]);
+    supabase.from("habits").insert([habit]);
   }
 
   function removeHabit(id: string) {
     setHabits((prev) => prev.filter((h) => h.id !== id));
+    supabase.from("habits").delete().eq("id", id);
   }
 
   function toggleToday(id: string) {
     const t = todayIso();
     setHabits((prev) =>
-      prev.map((h) =>
-        h.id === id
-          ? {
-              ...h,
-              done: h.done.includes(t)
-                ? h.done.filter((d) => d !== t)
-                : [...h.done, t],
-            }
-          : h,
-      ),
+      prev.map((h) => {
+        if (h.id !== id) return h;
+        const done = h.done.includes(t)
+          ? h.done.filter((d) => d !== t)
+          : [...h.done, t];
+        supabase.from("habits").update({ done }).eq("id", id);
+        return { ...h, done };
+      }),
     );
   }
 

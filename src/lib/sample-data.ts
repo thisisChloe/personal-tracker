@@ -1,17 +1,11 @@
+import { supabase } from "./supabase";
 import { toIsoDate } from "./date";
 import { createId } from "./id";
 import type { Bookmark } from "../features/bookmarks/use-bookmarks";
 import type { Habit } from "../features/habits/use-habits";
-import type { Task, TaskStatus } from "../features/todo/task-types";
+import type { TaskStatus } from "../features/todo/task-types";
 
-/** Tracker data keys — wiped by "clear", filled by "create sample". */
-const DATA_KEYS = {
-  todos: "pt.todos",
-  note: "pt.note",
-  bookmarks: "pt.bookmarks",
-  groups: "pt.bookmark-groups",
-  habits: "pt.habits",
-} as const;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 function isoInDays(days: number): string {
   const d = new Date();
@@ -38,7 +32,6 @@ const SAMPLE_TASKS: [string, string, number | null, TaskStatus][] = [
   ["Deep clean the house", "Mop floors, wash curtains, tidy the balcony.", -8, "done"],
 ];
 
-/** Demo bookmarks: url, title, group. */
 const SAMPLE_BOOKMARKS: [string, string, string][] = [
   ["https://mail.google.com", "Gmail", "Daily"],
   ["https://www.google.com/maps", "Google Maps", "Daily"],
@@ -68,25 +61,33 @@ Things to remember
 - Pay school fees at the start of the month
 - Take the car in for a service`;
 
-function buildTasks(): Task[] {
+function buildTasks() {
   const now = Date.now();
-  return SAMPLE_TASKS.map(([title, description, dueOffset, status], i) => ({
-    id: createId(),
-    title,
-    description,
-    dueDate: dueOffset === null ? "" : isoInDays(dueOffset),
-    status,
-    createdAt: now - (SAMPLE_TASKS.length - i) * 1000,
-  }));
+  return SAMPLE_TASKS.map(([title, description, dueOffset, status], i) => {
+    const due_date = dueOffset === null ? "" : isoInDays(dueOffset);
+    const done_at = status === "done" ? now - (8 - i) * DAY_MS : null;
+    return {
+      id: createId(),
+      title,
+      description,
+      due_date,
+      status,
+      created_at: now - (SAMPLE_TASKS.length - i) * 1000,
+      done_at,
+      checklist: [] as never[],
+    };
+  });
 }
 
-function buildBookmarks(): Bookmark[] {
+function buildBookmarks(): (Bookmark & { group_name: string; created_at: number })[] {
   return SAMPLE_BOOKMARKS.map(([url, title, group], i) => ({
     id: createId(),
     url,
     title,
     group,
+    group_name: group,
     createdAt: SAMPLE_BOOKMARKS.length - i,
+    created_at: SAMPLE_BOOKMARKS.length - i,
   }));
 }
 
@@ -98,62 +99,97 @@ function buildHabits(): Habit[] {
   ];
 }
 
-/** Write a full demo dataset into storage (no reload). */
-export function writeSampleData() {
-  const store = window.localStorage;
-  store.setItem(DATA_KEYS.todos, JSON.stringify(buildTasks()));
-  store.setItem(DATA_KEYS.note, JSON.stringify(SAMPLE_NOTE));
-  store.setItem(DATA_KEYS.bookmarks, JSON.stringify(buildBookmarks()));
-  store.setItem(DATA_KEYS.groups, JSON.stringify(SAMPLE_GROUPS));
-  store.setItem(DATA_KEYS.habits, JSON.stringify(buildHabits()));
+async function clearAllTables(userId: string) {
+  await Promise.all([
+    supabase.from("todos").delete().eq("user_id", userId),
+    supabase.from("notes").delete().eq("user_id", userId),
+    supabase.from("bookmarks").delete().eq("user_id", userId),
+    supabase.from("bookmark_groups").delete().eq("user_id", userId),
+    supabase.from("habits").delete().eq("user_id", userId),
+  ]);
 }
 
-/** Seed a demo dataset only if the board has never held tasks. */
-export function seedSampleDataIfEmpty() {
-  if (window.localStorage.getItem(DATA_KEYS.todos) === null) {
-    writeSampleData();
-  }
+async function writeData(userId: string) {
+  const tasks = buildTasks();
+  const bookmarks = buildBookmarks();
+  const habits = buildHabits();
+  const groups = SAMPLE_GROUPS.map((name, i) => ({ name, sort_order: i }));
+
+  await Promise.all([
+    supabase.from("todos").insert(
+      tasks.map((t) => ({
+        id: t.id,
+        title: t.title,
+        description: t.description,
+        due_date: t.due_date,
+        status: t.status,
+        created_at: t.created_at,
+        done_at: t.done_at,
+        checklist: [],
+      })),
+    ),
+    supabase.from("bookmarks").insert(
+      bookmarks.map((b) => ({
+        id: b.id,
+        url: b.url,
+        title: b.title,
+        group_name: b.group_name,
+        created_at: b.created_at,
+      })),
+    ),
+    supabase.from("bookmark_groups").insert(groups),
+    supabase.from("habits").insert(
+      habits.map((h) => ({ id: h.id, name: h.name, done: h.done })),
+    ),
+    supabase.from("notes").upsert({ user_id: userId, content: SAMPLE_NOTE }),
+  ]);
 }
 
-/** Overwrite every tracker with a full demo dataset, then reload to render it. */
-export function createSampleData() {
-  writeSampleData();
+export async function createSampleData() {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return;
+  await clearAllTables(user.id);
+  await writeData(user.id);
   window.location.reload();
 }
 
-/** Clear all tracker data and reload, keeping personalization settings. */
-export function clearData() {
-  for (const key of Object.values(DATA_KEYS)) {
-    window.localStorage.removeItem(key);
-  }
+export async function clearData() {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return;
+  await clearAllTables(user.id);
   window.location.reload();
 }
 
-const DAY_MS = 24 * 60 * 60 * 1000;
-
-function readTodos(): Task[] {
-  try {
-    const raw = window.localStorage.getItem(DATA_KEYS.todos);
-    return raw ? (JSON.parse(raw) as Task[]) : [];
-  } catch {
-    return [];
+export async function seedSampleDataIfEmpty() {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return;
+  const { count } = await supabase
+    .from("todos")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", user.id);
+  if (count === 0) {
+    await writeData(user.id);
   }
 }
 
-/** How many done tasks were completed more than `days` ago (for the confirm). */
-export function countDoneOlderThan(days: number): number {
+export async function countDoneOlderThan(days: number): Promise<number> {
   const cutoff = Date.now() - days * DAY_MS;
-  return readTodos().filter(
-    (t) => t.status === "done" && t.doneAt != null && t.doneAt < cutoff,
-  ).length;
+  const { count } = await supabase
+    .from("todos")
+    .select("id", { count: "exact", head: true })
+    .eq("status", "done")
+    .not("done_at", "is", null)
+    .lt("done_at", cutoff);
+  return count ?? 0;
 }
 
-/** Permanently delete done tasks completed more than `days` ago, then reload. */
-export function purgeDoneOlderThan(days: number) {
+export async function purgeDoneOlderThan(days: number) {
   const cutoff = Date.now() - days * DAY_MS;
-  const kept = readTodos().filter(
-    (t) => !(t.status === "done" && t.doneAt != null && t.doneAt < cutoff),
-  );
-  window.localStorage.setItem(DATA_KEYS.todos, JSON.stringify(kept));
+  await supabase
+    .from("todos")
+    .delete()
+    .eq("status", "done")
+    .not("done_at", "is", null)
+    .lt("done_at", cutoff);
   window.location.reload();
 }
